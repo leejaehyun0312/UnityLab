@@ -54,14 +54,12 @@ Editor Bake
 
 **Visual Reference:** Genshin Impact - 공간의 신전
 
-관찰한 핵심 요소는 다음과 같습니다.
-
 - 경계면 너머에 별도의 공간이 존재하는 듯한 깊이감
 - 시점 변화에 따른 내부 공간 표현
 - 유리/거울 계열의 표면 표현
 
 원본 게임의 내부 렌더링 구조를 복제한 것이 아니라,  
-시각적 특징을 기준으로 Cubemap 기반의 구현 방식을 설계했습니다.
+시각적 특징을 기준으로 Cubemap 기반 구현 방식을 설계했습니다.
 
 ---
 
@@ -84,7 +82,7 @@ GlassWorld Shader
 ```
 
 동적인 환경을 그대로 표현할 수 있다는 장점이 있지만,  
-Cubemap의 6개 Face마다 Alternative World를 다시 렌더링해야 합니다.
+Cubemap의 6개 Face마다 Alternate World를 다시 렌더링해야 합니다.
 
 ### Static Cubemap Baking
 
@@ -93,7 +91,7 @@ Cubemap의 6개 Face마다 Alternative World를 다시 렌더링해야 합니다
 ![Cubemap Baker](Docs/Images/baker_inspector.png)
 
 ```text
-Alternative World
+Alternate World
       ↓
 CubemapBaker
       ↓
@@ -106,8 +104,35 @@ CubemapSurface
 
 `CubemapBaker`는 Editor에서 Camera의 6방향을 캡처해 Cubemap Texture를 생성합니다.
 
+핵심 Bake 로직은 런타임 렌더링을 Editor 단계로 옮기는 역할만 담당하도록 단순하게 유지했습니다.
+
+```csharp
+public void Bake(string path)
+{
+    Texture2D strip = Capture();
+    File.WriteAllBytes(path, strip.EncodeToPNG());
+    DestroyImmediate(strip);
+
+    AssetDatabase.Refresh();
+    Import(path);
+}
+```
+
+전체 코드: [`CubemapBaker.cs`](Editor/CubemapBaker.cs)
+
 런타임에서는 `Camera.RenderToCubemap()`을 사용하지 않고,  
-`MaterialPropertyBlock`을 통해 Renderer에 Cubemap만 전달합니다.
+`MaterialPropertyBlock`으로 Renderer별 Cubemap만 전달합니다.
+
+```csharp
+void Apply()
+{
+    targetRenderer.GetPropertyBlock(block);
+    block.SetTexture(propertyId, cubemap);
+    targetRenderer.SetPropertyBlock(block);
+}
+```
+
+전체 코드: [`CubemapSurface.cs`](Runtime/CubemapSurface.cs)
 
 ---
 
@@ -115,27 +140,31 @@ CubemapSurface
 
 하나의 Cube Mesh에서 두 개의 Pass를 사용합니다.
 
-### World Pass
-
 ```text
+World Pass
 Cull Front
-→ Back Face Render
+→ Back Face
 → Cubemap Sampling
-```
 
-Cube 내부 면에 Alternate World를 출력합니다.
-
-### Glass Pass
-
-```text
+Glass Pass
 Cull Back
-→ Front Face Render
+→ Front Face
 → Fresnel Glass
 ```
 
-외부 표면에는 Fresnel 기반의 유리 효과를 추가합니다.
+World Pass에서는 카메라와 현재 Fragment 위치를 기준으로 Cubemap 방향을 계산합니다.
 
-이 구조를 사용해 별도의 Front/Back Mesh 없이 하나의 Cube Renderer로 공간과 유리를 함께 표현했습니다.
+```hlsl
+half4 FragWorld(Varyings input) : SV_Target
+{
+    float3 direction = normalize(input.positionWS - GetCameraPositionWS());
+    return SAMPLE_TEXTURECUBE(_WorldCube, sampler_WorldCube, direction);
+}
+```
+
+이를 통해 별도의 Front/Back Mesh 없이 하나의 Cube Renderer에서 내부 월드와 유리 표면을 함께 표현했습니다.
+
+전체 코드: [`GlassWorld.shader`](Shaders/GlassWorld.shader)
 
 ---
 
