@@ -3,7 +3,7 @@
 > Genshin Impact 「공간의 신전」의 거울/이공간 표현을 Visual Reference로 삼아,  
 > Unity URP에서 Cubemap 기반의 Alternate World 표현과 최적화 방식을 구현한 기술 프로토타입입니다.
 
-[![WorldView Box Demo](https://img.youtube.com/vi/lyvdPmv64Qs/maxresdefault.jpg)](https://youtu.be/lyvdPmv64Qs)
+[[[![WorldView Box Demo](Docs/Images/youtube_demo.png)](https://youtu.be/lyvdPmv64Qs)](https://youtu.be/lyvdPmv64Qs)](https://youtu.be/lyvdPmv64Qs)
 
 ---
 
