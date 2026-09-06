@@ -2,74 +2,71 @@
 
 Unity URP 환경에서 구현한 **GPU 기반 반응형 눈 표면 시스템**입니다.
 
-캐릭터의 발처럼 표면과 접촉하는 대상을 `SurfaceBrush`로 변환하고, 해당 Brush가 지나간 영역을 GPU Surface State에 기록합니다.  
-단순한 발자국 이펙트가 아니라 **접촉 위치·이동 궤적·압력에 따라 표면 상태가 누적되고 시간이 지나며 복원되는 구조**를 목표로 제작했습니다.
+캐릭터의 발과 같이 표면에 접촉하는 대상을 `SurfaceBrush` 데이터로 변환하고, 접촉 위치와 이동 궤적, 압력에 따른 변형을 GPU Surface State에 누적합니다. 기록된 흔적은 일정 시간 유지된 뒤 픽셀별 경과 시간에 따라 자연스럽게 복원됩니다.
 
-> 현재 저장소는 1차 완성본입니다.  
-> Foot Contact 기반 눈 반응, Page 기반 GPU State 관리, Brush Stroke, 시간 복원까지 구현되어 있습니다.
+단순한 발자국 이펙트를 출력하는 방식이 아니라, 다양한 접촉 대상을 수용할 수 있는 **범용 Reactive Surface 구조**를 목표로 설계했습니다.
 
 ---
 
 ## Demo
 
-> 아래 이미지는 `Docs/Images`에 실제 플레이 캡처를 추가한 뒤 사용합니다.
-
 ### Walking / Foot Contact
 
 ![Walking](Docs/Images/01_walking.png)
 
-캐릭터의 발이 눈 표면에 접촉하면 Brush가 생성되며, 이동에 따라 연속적인 자국이 기록됩니다.
+Humanoid 발 위치에서 눈 표면과의 접촉을 감지하고, 접촉 지점에 Brush를 생성합니다. 좌우 발의 실제 위치를 기준으로 흔적이 기록되므로 캐릭터의 보행 애니메이션과 자연스럽게 연결됩니다.
 
 ### Continuous Brush Stroke
 
-![Brush Stroke](Docs/Images/02_drag.png)
+![Continuous Brush Stroke](Docs/Images/02_drag.png)
 
-접촉 상태에서 발이 움직이면 이전 위치와 현재 위치 사이를 하나의 Brush Stroke로 처리합니다.  
-이를 통해 제자리 회전이나 발 끌기에서도 끊어진 Stamp가 아닌 연속적인 흔적을 만들 수 있습니다.
+접촉 중인 발이 움직이면 이전 위치와 현재 위치 사이를 하나의 Brush Stroke로 처리합니다. 제자리 회전이나 발 끌기에서도 개별 Stamp가 끊어지지 않고 연속적인 흔적으로 이어집니다.
 
-### Recovery
+### Surface Recovery
 
-![Recovery](Docs/Images/03_recovery.png)
+![Surface Recovery](Docs/Images/03_recovery.png)
 
-기록된 Surface State는 일정 시간 유지된 뒤 서서히 원상 복구됩니다.
+기록된 흔적은 일정 시간 유지된 뒤 오래된 영역부터 점진적으로 감소합니다. 각각의 픽셀이 개별적인 경과 시간을 가지므로 서로 다른 시점에 생성된 자국이 동시에 사라지지 않습니다.
 
 ### Sloped / Elevated Surface
 
-![Slope](Docs/Images/04_slope.png)
+![Sloped Surface](Docs/Images/04_slope.png)
 
-평지뿐 아니라 경사면과 지붕처럼 높이가 다른 표면에서도 동일한 Reactive Surface 흐름을 사용할 수 있도록 구성했습니다.
+표면의 로컬 좌표계를 기준으로 Brush 위치와 State Page를 계산하여 평지뿐 아니라 경사면과 높이가 다른 지붕에서도 동일한 반응 구조가 동작합니다.
 
 ---
 
-## Core Flow
+## Core Architecture
 
 ```text
-Character Contact
-       ↓
-  SurfaceBrush
-       ↓
-   SnowSurface
-       ↓
- Logical Tile / State Page
-       ↓
- SnowStateStorage
-       ↓
+Surface Contact
+      ↓
+ SurfaceBrush
+      ↓
+  SnowSurface
+      ↓
+Logical Tile / State Page
+      ↓
+SnowStateStorage
+      ↓
  Compute Shader
-       ↓
- GPU Surface State
-       ↓
- Snow Shader Rendering
+      ↓
+GPU Surface State
+      ↓
+ Surface Shader
 ```
 
-핵심은 **접촉 검출과 표면 반응을 분리한 것**입니다.
+핵심은 **접촉 검출과 표면 변형을 분리한 구조**입니다.
 
-`SnowInteractor`는 캐릭터의 접촉 정보를 Brush로 만들어 주는 데모 입력 계층이고, 실제 Surface 시스템은 Brush가 어떤 오브젝트에서 생성되었는지 알 필요가 없습니다.
+`SnowInteractor`는 Humanoid 발 접촉을 `SurfaceBrush`로 변환하는 입력 계층입니다. 실제 Surface 시스템은 Brush가 캐릭터, 바퀴, 무기 중 어떤 대상으로부터 생성되었는지 알 필요 없이 전달받은 데이터만 처리합니다.
+
+이를 통해 접촉 대상을 추가하더라도 GPU State 관리와 렌더링 구조를 변경하지 않고 동일한 표면 반응을 재사용할 수 있습니다.
 
 ---
 
 ## Surface Brush
 
-`SurfaceBrush`는 표면에 전달되는 최소한의 상호작용 데이터입니다.
+`SurfaceBrush`는 접촉 대상이 표면에 전달하는 최소 단위의 상호작용 데이터입니다.
 
 ```csharp
 public readonly struct SurfaceBrush
@@ -82,36 +79,32 @@ public readonly struct SurfaceBrush
 }
 ```
 
-이전 위치와 현재 위치를 함께 전달하기 때문에 매 프레임 원형 Stamp를 반복해서 찍는 대신, Compute Shader에서 **Brush가 이동한 구간 전체를 Sweep**할 수 있습니다.
+현재 위치뿐 아니라 이전 위치를 함께 전달하여 Compute Shader에서 두 지점 사이의 구간 전체를 Sweep합니다. 프레임마다 독립적인 Stamp를 반복해서 찍는 방식보다 빠른 이동과 낮은 프레임 환경에서도 흔적이 끊어지는 현상을 줄일 수 있습니다.
 
-현재는 발 접촉을 기준으로 사용하고 있지만 동일한 입력 구조를 검, 타이어, 박스 Drag 등의 Contact Source에도 확장할 수 있습니다.
+`SnowStampProfile`은 흔적의 크기, 회전, 강도, 부드러움과 같은 Brush 특성을 정의합니다. 접촉 대상마다 서로 다른 Profile을 사용하여 같은 처리 흐름 안에서 다양한 형태의 변형을 표현할 수 있습니다.
 
 ---
 
 ## GPU Surface State
 
-눈의 상태는 CPU Mesh 데이터가 아니라 `Texture2DArray` 기반 GPU State로 관리합니다.
+눈의 상태는 CPU Mesh가 아닌 `Texture2DArray` 기반의 GPU State로 관리합니다.
 
-현재 State 채널은 다음 용도로 사용합니다.
+| Channel | State        |
+| :-----: | ------------ |
+|    R    | Depression   |
+|    G    | Compression  |
+|    B    | Displacement |
+|    A    | Reserved     |
 
-| Channel | Meaning |
-| --- | --- |
-| R | Depression |
-| G | Compression |
-| B | Displacement |
-| A | Reserved / Surface State |
+기본 포맷은 `R8G8B8A8_UNorm`이며 Compute Shader가 Brush 영역의 State를 갱신합니다. Surface Shader는 저장된 값을 읽어 눈의 깊이, 색상과 Normal 표현에 반영합니다.
 
-기본 포맷은 `R8G8B8A8_UNorm`이며, Compute Shader가 Brush 영역의 State를 갱신합니다.
-
-이를 통해 CPU에서 고밀도 Mesh Vertex를 직접 수정하지 않고도 작은 발자국과 연속적인 흔적을 표현할 수 있습니다.
+고밀도 Mesh의 Vertex를 CPU에서 직접 수정하지 않기 때문에 작은 발자국과 연속적인 이동 흔적을 GPU 중심으로 처리할 수 있습니다.
 
 ---
 
 ## Page-based State Management
 
-넓은 표면 전체에 고해상도 RenderTexture를 할당하지 않고, 논리적인 Tile과 GPU State Page를 분리했습니다.
-
-기본 구성:
+넓은 표면 전체에 하나의 고해상도 Render Texture를 할당하면 실제 접촉이 없는 영역까지 GPU 메모리를 점유하게 됩니다. 이를 방지하기 위해 표면의 논리적인 Tile과 GPU State Page를 분리했습니다.
 
 ```text
 Logical Tile : 16 m
@@ -119,19 +112,27 @@ State Page   : 4 m
 Resolution   : 512 × 512 / Page
 ```
 
-한 Tile 내부에 여러 State Page가 존재할 수 있으며, **실제로 Brush가 닿은 Page만 GPU Slice를 할당**합니다.
+하나의 Tile은 여러 State Page로 구성되며, **실제로 Brush가 닿은 Page에만 GPU Slice를 할당**합니다.
 
-`SnowStateStorage`는 제한된 Slice Pool을 관리하며, 용량이 부족하면 오래 사용되지 않은 Page를 LRU 방식으로 재사용합니다.
+`SnowStateStorage`는 제한된 수의 Texture Slice를 Pool로 관리합니다. 사용 가능한 Slice가 없으면 가장 오랫동안 사용되지 않은 Page를 선택하여 재사용하는 LRU 정책을 적용했습니다.
+
+이 구조를 통해 표면의 전체 크기와 GPU State 용량을 분리하고, 넓은 공간에서도 실제 상호작용이 발생한 영역을 중심으로 메모리를 사용할 수 있습니다.
 
 ---
 
-## Recovery
+## Page Boundary Handling
 
-각 State Page에는 Surface State와 별도로 Age Texture가 존재합니다.
+Brush Stroke가 하나의 Page 경계를 넘어갈 경우 영향을 받는 모든 Page를 계산하여 각각 Compute Dispatch를 수행합니다.
 
-Brush가 픽셀을 갱신하면 해당 픽셀의 Age가 초기화되고, 일정 시간이 지난 뒤 State가 점진적으로 감소합니다.
+각 Page는 독립적인 Texture Slice를 사용하지만 Brush 위치는 동일한 Surface 로컬 좌표계를 기준으로 변환됩니다. 이를 통해 Page 경계에서도 흔적이 잘리거나 위치가 어긋나지 않고 하나의 연속된 Stroke로 표현됩니다.
 
-현재 테스트 기준:
+---
+
+## Surface Recovery
+
+각 State Page는 Surface State와 별도로 픽셀별 Age Texture를 관리합니다.
+
+Brush가 픽셀을 갱신하면 해당 위치의 Age가 초기화됩니다. 이후 일정한 주기로 경과 시간을 누적하고, 설정된 Lifetime을 지난 픽셀의 State를 Fade Duration 동안 점진적으로 감소시킵니다.
 
 ```text
 Lifetime          : 5 sec
@@ -139,52 +140,68 @@ Fade Duration     : 2 sec
 Recovery Interval : 0.25 sec
 ```
 
-따라서 최근에 밟힌 영역과 오래된 영역이 서로 다른 시점에 복원됩니다.
+Page 전체를 하나의 시간값으로 복구하지 않기 때문에 같은 Page 안에서도 최근에 밟힌 영역과 오래된 영역이 서로 다른 시점에 복원됩니다.
+
+Recovery 연산은 매 프레임 실행하지 않고 지정된 Interval에 맞춰 처리하여 불필요한 Compute Dispatch를 줄였습니다.
 
 ---
 
 ## Optimization
 
-현재 1차 완성본에서 적용한 최적화 방향입니다.
+* 접촉이 발생한 State Page만 GPU Slice 할당
+* `Texture2DArray` 기반의 공유 State Storage
+* 제한된 Page Capacity와 LRU Slice 재사용
+* Foot Contact 검출에 `RaycastNonAlloc` 사용
+* 최소 이동 거리 이상일 때만 Brush Stroke 적용
+* CPU Vertex 변형 없이 Compute Shader에서 State 갱신
+* Recovery 연산을 일정한 Interval 단위로 실행
+* 오래된 Surface State를 자동 복원하여 장기 누적 방지
+* 상태를 가지지 않는 좌표 계산을 Utility로 분리
 
-- 필요한 State Page만 GPU Slice 할당
-- `Texture2DArray` 기반 공유 State Storage
-- 제한된 Page Capacity + LRU 재사용
-- Foot Contact 검사에 `RaycastNonAlloc` 사용
-- Brush가 일정 거리 이상 이동했을 때만 Stroke 적용
-- CPU Vertex 변형 대신 Compute Shader에서 Surface State 갱신
-- 상태가 일정 시간 뒤 자동 복원되어 장기 누적 방지
-
-Snow Cover 생성용 Baker는 데모 환경 구성을 위한 Authoring Tool이며, 본 시스템의 핵심 런타임 구조와 분리되어 있습니다.
+Snow Cover Baker는 눈 표면을 구성하는 Editor Authoring Tool이며 런타임 State 처리 구조와 분리되어 있습니다.
 
 ---
 
 ## Main Components
 
 ### `SnowSurface`
-Reactive Surface의 좌표 공간과 Tile/Page를 관리하고, Brush가 영향을 주는 State Page를 결정합니다.
+
+Reactive Surface의 좌표 공간과 논리 Tile, State Page를 관리합니다. 전달받은 Brush가 영향을 주는 Page를 계산하고 `SnowStateStorage`에 변형을 요청합니다.
 
 ### `SnowStateStorage`
-GPU Texture2DArray, Page Slice Pool, LRU, Brush Compute Dispatch, Recovery를 관리합니다.
+
+GPU `Texture2DArray`, Page Slice Pool, LRU 재사용, Brush Compute Dispatch와 시간 복원을 관리합니다.
 
 ### `SnowState.compute`
-Brush Sweep을 Surface State에 기록하고 시간에 따른 복원을 처리합니다.
+
+Brush의 이전 위치와 현재 위치 사이를 Sweep하여 Surface State에 기록하고, Age Texture를 기반으로 시간에 따른 복원을 처리합니다.
 
 ### `SnowSurfaceState.shader`
-저장된 Surface State를 읽어 눈의 색상, 깊이감, Normal/Parallax 표현에 반영합니다.
+
+GPU Surface State를 읽어 눈 표면의 깊이감과 색상, Normal 표현에 반영합니다.
 
 ### `SnowInteractor`
-Humanoid 발 위치에서 Surface Contact를 검출하고 `SurfaceBrush`를 생성하는 데모 입력 코드입니다.
+
+Humanoid 좌우 발의 접촉을 감지하고 접촉 위치, 이동 방향과 압력을 포함한 `SurfaceBrush`를 생성합니다.
+
+### `SnowStampProfile`
+
+Brush의 크기, 회전, 강도, 부드러움과 Offset을 정의합니다.
 
 ### `SnowSurfaceUtility`
-좌표 변환과 Page/Tile 계산처럼 상태를 가지지 않는 수학 로직을 분리한 Utility입니다.
+
+World·Local 좌표 변환과 Tile·Page Index 계산처럼 상태를 가지지 않는 수학 로직을 담당합니다.
+
+### `SnowSurfaceBaker`
+
+대상 Mesh 위에 눈 표면을 생성하고 데모 환경을 구성하는 Editor Authoring Tool입니다.
 
 ---
 
 ## Project Structure
 
 ```text
-ReactiveSnow_Portfolio_FirstComplete/
+ReactiveSurface/
 ├─ SnowData.cs
 ├─ SnowSurface.cs
 ├─ SnowSurfaceUtility.cs
@@ -197,48 +214,43 @@ ReactiveSnow_Portfolio_FirstComplete/
 │  └─ SnowSurfaceState.shader
 ├─ Docs/
 │  └─ Images/
-├─ README.md
-└─ README_CAPTURE_GUIDE.md
+│     ├─ 01_walking.png
+│     ├─ 02_drag.png
+│     ├─ 03_recovery.png
+│     └─ 04_slope.png
+└─ README.md
 ```
 
 ---
 
-## Current Status
+## Implemented Features
 
-### First Complete
-
-- [x] Foot Contact
-- [x] Continuous Brush Stroke
-- [x] Page Boundary 대응
-- [x] Sparse GPU Page Allocation
-- [x] LRU Page Reuse
-- [x] Surface State Recovery
-- [x] Slope / Elevated Surface Test
-- [x] Runtime Footprint Rendering
-
-### Next
-
-- [ ] Sword / Weapon Brush Source
-- [ ] Wheel Contact
-- [ ] Rigidbody / Drag Contact
-- [ ] NPC Distance LOD
-- [ ] Snow Cover Visual Quality
-- [ ] Sand / Mud Surface Profile
-- [ ] Generalized Reactive Surface naming/refactor
+* Humanoid Foot Contact
+* Continuous Brush Stroke
+* Pressure-based Surface Deformation
+* Page Boundary Handling
+* Sparse GPU Page Allocation
+* Texture Slice Pooling
+* LRU Page Reuse
+* Pixel-based Surface Recovery
+* Sloped and Elevated Surface Support
+* Runtime Footprint Rendering
+* Snow Surface Baking Tool
 
 ---
 
 ## Environment
 
-- Unity 6
-- Universal Render Pipeline
-- Compute Shader
-- HLSL / C#
+* Unity 6
+* Universal Render Pipeline
+* Compute Shader
+* HLSL
+* C#
 
 ---
 
-## Notes
+## Design Scope
 
-본 프로젝트는 특정 상용 게임의 내부 구현을 재현하거나 분석한 코드가 아니라, 눈 위 상호작용 표현을 참고하여 직접 설계한 Reactive Surface 구현입니다.
+본 프로젝트는 눈 위에서 발생하는 상호작용 표현을 참고하여 직접 설계한 GPU 기반 Reactive Surface 구현입니다.
 
-현재 저장소는 이력서 및 포트폴리오 제출을 위한 **1차 완성본**이며, 이후 다른 Contact Source와 Surface Material로 확장할 예정입니다.
+캐릭터의 발자국을 시작점으로 구현했지만 접촉 입력을 `SurfaceBrush`로 추상화하여 무기 궤적, 바퀴, Rigidbody Drag와 같은 다른 Contact Source도 동일한 State 처리 구조에 연결할 수 있도록 구성했습니다.
