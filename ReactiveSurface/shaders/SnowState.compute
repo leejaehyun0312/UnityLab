@@ -1,0 +1,154 @@
+#pragma kernel ClearSlice
+#pragma kernel ApplyBrush
+#pragma kernel RecoverState
+
+RWTexture2DArray<float4> _SnowState;
+RWTexture2DArray<float> _SnowAge;
+
+int _Resolution;
+int _SliceIndex;
+
+float2 _PageMin;
+float2 _PageSize;
+
+float2 _BrushStart;
+float2 _BrushEnd;
+float2 _BrushDirection;
+float2 _BrushSize;
+
+float _BrushPressure;
+float _BrushFalloff;
+
+float _DepressionStrength;
+float _CompressionStrength;
+float _DisplacementStrength;
+
+float _DeltaTime;
+float _FootprintLifetime;
+float _FadeDuration;
+
+float DistanceToSegment(float2 p, float2 a, float2 b)
+{
+    float2 ab = b - a;
+    float lengthSq = dot(ab, ab);
+
+    if (lengthSq < 0.000001)
+        return length(p - a);
+
+    float t = saturate(dot(p - a, ab) / lengthSq);
+    return length(p - (a + ab * t));
+}
+
+float BrushDistance(float2 position)
+{
+    float2 forward = normalize(_BrushDirection);
+    float2 right = float2(forward.y, -forward.x);
+
+    float2 halfSize = max(_BrushSize * 0.5, 0.001);
+
+    float2 p = float2(
+        dot(position, right) / halfSize.x,
+        dot(position, forward) / halfSize.y);
+
+    float2 a = float2(
+        dot(_BrushStart, right) / halfSize.x,
+        dot(_BrushStart, forward) / halfSize.y);
+
+    float2 b = float2(
+        dot(_BrushEnd, right) / halfSize.x,
+        dot(_BrushEnd, forward) / halfSize.y);
+
+    return DistanceToSegment(p, a, b);
+}
+
+[numthreads(8, 8, 1)]
+void ClearSlice(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Resolution || id.y >= _Resolution)
+        return;
+
+    int3 coord = int3(id.xy, _SliceIndex);
+
+    _SnowState[coord] = 0;
+    _SnowAge[coord] = 0;
+}
+
+[numthreads(8, 8, 1)]
+void ApplyBrush(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Resolution || id.y >= _Resolution)
+        return;
+
+    float2 pageUV = (id.xy + 0.5) / _Resolution;
+    float2 position = _PageMin + pageUV * _PageSize;
+
+    float distanceToBrush = BrushDistance(position);
+
+    if (distanceToBrush > 1.0)
+        return;
+
+    float edgeStart = saturate(1.0 - _BrushFalloff);
+    float coverage = 1.0 - smoothstep(edgeStart, 1.0, distanceToBrush);
+
+    if (coverage <= 0.001)
+        return;
+
+    float displacement =
+        smoothstep(0.65, 1.0, distanceToBrush) *
+        coverage;
+
+    int3 coord = int3(id.xy, _SliceIndex);
+    float4 state = _SnowState[coord];
+
+    state.r = saturate(
+        state.r +
+        coverage *
+        _BrushPressure *
+        _DepressionStrength);
+
+    state.g = saturate(
+        state.g +
+        coverage *
+        _BrushPressure *
+        _CompressionStrength);
+
+    state.b = max(
+        state.b,
+        displacement *
+        _BrushPressure *
+        _DisplacementStrength);
+
+    _SnowState[coord] = state;
+    _SnowAge[coord] = 0;
+}
+
+[numthreads(8, 8, 1)]
+void RecoverState(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Resolution || id.y >= _Resolution)
+        return;
+
+    int3 coord = int3(id.xy, id.z);
+    float4 state = _SnowState[coord];
+
+    if (state.r <= 0 &&
+        state.g <= 0 &&
+        state.b <= 0)
+        return;
+
+    float age = _SnowAge[coord] + _DeltaTime;
+    _SnowAge[coord] = age;
+
+    if (age < _FootprintLifetime)
+        return;
+
+    float fade =
+        _DeltaTime /
+        max(_FadeDuration, 0.001);
+
+    state.r = max(0, state.r - fade);
+    state.g = max(0, state.g - fade);
+    state.b = max(0, state.b - fade);
+
+    _SnowState[coord] = state;
+}
