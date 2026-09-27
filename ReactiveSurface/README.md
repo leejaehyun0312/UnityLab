@@ -2,6 +2,17 @@
 
 Unity 6 URP에서 구현한 GPU 기반 반응형 눈 표면 시스템입니다. 캐릭터의 접촉과 이동 경로를 Compute Shader로 기록하고, 제한된 GPU Page를 실제 상호작용 영역에만 할당합니다.
 
+캐릭터가 눈 위를 이동하면 접촉 지점 사이를 연속적인 Brush Stroke로 연결하여 눌림과 밀려남을 기록합니다. 생성된 흔적은 픽셀마다 유지 시간을 계산해 순차적으로 복원되며, 다수의 NPC가 존재하는 환경에서는 플레이어 주변의 접촉만 선별적으로 갱신합니다.
+
+주요 기능은 다음과 같습니다.
+
+- 절차적 Noise를 이용한 불규칙한 적설 높이 표현
+- 이동 경로와 압력을 반영한 연속적인 눈 표면 변형
+- 실제 접촉 영역에만 GPU Page를 할당하는 Sparse State 관리
+- Page 우선순위와 보호 시간을 이용한 플레이어 흔적 보존
+- 픽셀별 Age Texture를 이용한 시간 기반 표면 복원
+- Spatial Hash와 거리 단계화를 이용한 다중 Agent 최적화
+
 ![Reactive Snow Surface](Docs/Images/00_overview.png)
 
 ## Preview
@@ -42,16 +53,6 @@ SnowState.compute → SnowSurfaceState.shader
 
 접촉 검출, Brush 생성, Page 관리와 GPU 상태 갱신을 분리했습니다. `SnowInteractor`는 이전 위치와 현재 위치를 하나의 Stroke로 전달하여 빠른 이동에서도 흔적이 끊기지 않도록 처리합니다.
 
-## Key Features
-
-- 절차적 Noise 기반 적설 높이와 거리 제한 Sparkle
-- 접촉 영역에만 할당되는 `Texture2DArray` Page
-- Page 경계를 잇는 연속 Brush Stroke
-- 우선순위와 보호 시간을 반영한 Page 재사용
-- 픽셀별 Age 기반 흔적 복원
-- Spatial Hash와 거리 단계화를 이용한 다중 Agent 접촉 처리
-- 공중 상태에서 흔적 생성을 중단하는 Jump Filtering
-
 ## GPU State
 
 | Channel | Value |
@@ -91,11 +92,25 @@ Unity Editor에서 200 Agent를 200 × 200 영역에 배치한 측정 결과입�
 
 ## Core Code
 
-- [`SnowStateStorage.cs`](Scripts/SnowStateStorage.cs) — GPU Page 할당, 재사용, Brush Dispatch와 복원
-- [`SurfaceContactSystem.cs`](Scripts/SurfaceContactSystem.cs) — Spatial Hash와 다중 Agent 접촉 갱신
-- [`SnowSurface.cs`](Scripts/SnowSurface.cs) — Surface 좌표, 영향 Page와 Shader Page Map 관리
-- [`SnowState.compute`](Shaders/SnowState.compute) — Stroke 기록과 픽셀별 상태 복원
-- [`SnowSurfaceState.shader`](Shaders/SnowSurfaceState.shader) — 적설 변위, 색상, Normal과 Sparkle 표현
+### [`SnowStateStorage.cs`](Scripts/SnowStateStorage.cs)
+
+공유 `Texture2DArray`와 Slice Pool을 소유하는 GPU 상태 관리자입니다. 요청된 Page에 Slice를 할당하고, Capacity가 가득 차면 복원 상태·우선순위·보호 시간·최근 사용 시점을 비교해 재사용할 Page를 선택합니다. Brush 기록과 Recovery Compute Dispatch도 이 클래스에서 한 흐름으로 관리합니다.
+
+### [`SurfaceContactSystem.cs`](Scripts/SurfaceContactSystem.cs)
+
+등록된 Surface를 Spatial Hash Cell에 분류하고 Agent가 위치한 Cell의 후보만 검사합니다. 플레이어는 항상 갱신하지만 NPC는 진입·이탈 거리, 이동량과 갱신 주기를 기준으로 검사 빈도를 조절하여 Agent 수가 늘어날 때의 CPU 비용을 제한합니다.
+
+### [`SnowSurface.cs`](Scripts/SnowSurface.cs)
+
+하나의 눈 표면이 사용하는 좌표 공간과 논리 Page를 관리합니다. World 좌표로 전달된 Brush 범위를 Surface 좌표로 변환하고, 영향을 받는 Page만 찾아 `SnowStateStorage`에 전달합니다. 할당된 Slice 정보는 Page Map Texture로 Shader에 연결합니다.
+
+### [`SnowState.compute`](Shaders/SnowState.compute)
+
+이전 접촉 위치와 현재 위치 사이의 선분을 Sweep하여 Depression, Compression, Displacement 채널을 갱신합니다. 별도의 Age Texture에는 픽셀별 경과 시간을 기록하고, Lifetime 이후 각 상태를 Fade Duration에 맞춰 복원합니다.
+
+### [`SnowSurfaceState.shader`](Shaders/SnowSurfaceState.shader)
+
+절차적 Noise로 생성한 기본 적설 높이와 GPU State를 결합해 최종 Vertex 변위를 계산합니다. 눌림과 밀려남을 색상 및 Normal 표현에도 반영하며, Sparkle은 플레이어와의 거리에 따라 Fade 처리합니다.
 
 ## Setup
 
