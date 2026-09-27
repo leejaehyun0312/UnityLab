@@ -4,12 +4,12 @@ using UnityEngine;
 public class SnowStampProfile : ScriptableObject
 {
     [SerializeField] Vector2 size = new(0.11f, 0.26f);
-    [SerializeField, Range(0.01f, 1f)] float falloff = 0.3f;
+    [SerializeField, Range(0.01f, 1f)] float falloff = 0.22f;
 
     [Header("Response")]
-    [SerializeField, Range(0f, 1f)] float depressionResponse = 1f;
-    [SerializeField, Range(0f, 1f)] float compressionResponse = 0.6f;
-    [SerializeField, Range(0f, 1f)] float displacementResponse = 0.15f;
+    [SerializeField, Range(0f, 1f)] float depressionResponse = 0.28f;
+    [SerializeField, Range(0f, 1f)] float compressionResponse = 0.65f;
+    [SerializeField, Range(0f, 1f)] float displacementResponse = 0.08f;
 
     public Vector2 Size => size;
     public float Falloff => falloff;

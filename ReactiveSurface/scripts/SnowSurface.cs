@@ -4,19 +4,20 @@ using UnityEngine.Experimental.Rendering;
 
 [ExecuteAlways]
 [RequireComponent(typeof(Renderer))]
-public class SnowSurface : MonoBehaviour
+public class SnowSurface : MonoBehaviour, IContactSurface
 {
     const float MinScale = 0.001f;
     const int MaxPageCount = 256;
 
-    [SerializeField, Range(4f, 64f)] float tileSize = 16f;
-    [SerializeField, Range(1f, 8f)] float pageSize = 4f;
+    [SerializeField, Range(1f, 8f)] float pageSize = 8f;
+    [SerializeField] SnowHeightField heightField = new();
 
-    readonly Dictionary<Vector2Int, SnowTile> tiles = new();
     readonly Dictionary<Vector2Int, SnowStatePage> pages = new();
     readonly List<SnowBrushStroke> brushBuffer = new();
 
     Renderer targetRenderer;
+    Collider surfaceCollider;
+    SnowHeightSettings heightSettings;
     Bounds localBounds;
     MaterialPropertyBlock properties;
     Texture2D pageSliceMap;
@@ -29,28 +30,78 @@ public class SnowSurface : MonoBehaviour
     float LocalPageSizeX => pageSize / ScaleX;
     float LocalPageSizeZ => pageSize / ScaleZ;
 
-    public int TileCountX => Mathf.Max(1, Mathf.CeilToInt(WorldSizeX / tileSize));
-    public int TileCountZ => Mathf.Max(1, Mathf.CeilToInt(WorldSizeZ / tileSize));
     public int PageCountX => Mathf.Clamp(Mathf.CeilToInt(WorldSizeX / pageSize), 1, MaxPageCount);
     public int PageCountZ => Mathf.Clamp(Mathf.CeilToInt(WorldSizeZ / pageSize), 1, MaxPageCount);
-    public float TileSize => tileSize;
-    public float PageSize => pageSize;
-    public IReadOnlyDictionary<Vector2Int, SnowTile> Tiles => tiles;
-    public IReadOnlyDictionary<Vector2Int, SnowStatePage> Pages => pages;
+    public Component Component => this;
+    public int Priority => 10;
+    public Bounds ContactBounds
+    {
+        get
+        {
+            Bounds bounds = targetRenderer ? targetRenderer.bounds : new Bounds(transform.position, Vector3.zero);
+            float expansion = heightSettings.MaximumHeight + 0.5f;
+            bounds.Expand(new Vector3(0f, expansion * 2f, 0f));
+            return bounds;
+        }
+    }
 
-    void OnEnable() => Initialize();
-    void OnDisable() => ReleasePageMap();
+    void OnEnable()
+    {
+        Initialize();
+        if (Application.isPlaying) SurfaceContactSystem.RegisterSurface(this);
+    }
+
+    void OnDisable()
+    {
+        if (Application.isPlaying) SurfaceContactSystem.UnregisterSurface(this);
+        ReleasePageMap();
+    }
+
+    void OnValidate()
+    {
+        if (!targetRenderer) targetRenderer = GetComponent<Renderer>();
+        RefreshHeightSettings();
+    }
 
     void Initialize()
     {
         targetRenderer = GetComponent<Renderer>();
+        surfaceCollider = GetComponent<Collider>();
         localBounds = targetRenderer.localBounds;
+        RefreshHeightSettings();
         properties ??= new MaterialPropertyBlock();
-        tiles.Clear();
         pages.Clear();
         CreatePageMap();
         ApplyShaderData();
     }
+
+    void RefreshHeightSettings() => heightSettings = new SnowHeightSettings(targetRenderer ? targetRenderer.sharedMaterial : null);
+
+    public bool TrySample(Vector3 position, out SurfaceContact contact)
+    {
+        contact = default;
+        if (!TryGetBaseHeight(position, out float baseHeight)) return false;
+        float snowHeight = SnowUtility.SampleHeight(new Vector2(position.x, position.z), heightSettings);
+        Vector3 point = new(position.x, baseHeight + snowHeight, position.z);
+        contact = new SurfaceContact(this, point, Vector3.up, point.y - position.y);
+        return true;
+    }
+
+    bool TryGetBaseHeight(Vector3 position, out float height)
+    {
+        if (heightField.TrySample(position, out height)) return true;
+        if (surfaceCollider)
+        {
+            Bounds bounds = surfaceCollider.bounds;
+            Ray ray = new(new Vector3(position.x, bounds.max.y + 1f, position.z), Vector3.down);
+            if (surfaceCollider.Raycast(ray, out RaycastHit hit, bounds.size.y + 2f)) { height = hit.point.y; return true; }
+        }
+        height = targetRenderer ? targetRenderer.bounds.max.y : transform.position.y;
+        return targetRenderer && targetRenderer.bounds.Contains(new Vector3(position.x, height, position.z));
+    }
+
+    public void SetHeightField(Bounds bounds, int width, int height, float[] heights, bool[] valid) => heightField.Set(bounds, width, height, heights, valid);
+    public void ClearHeightField() => heightField.Clear();
 
     void CreatePageMap()
     {
@@ -97,9 +148,9 @@ public class SnowSurface : MonoBehaviour
         float worldSizeX = WorldSizeX;
         float worldSizeZ = WorldSizeZ;
 
-        Vector2 start = SnowSurfaceUtility.WorldToMeter(transform, localBounds, brush.PreviousPosition, scaleX, scaleZ);
-        Vector2 end = SnowSurfaceUtility.WorldToMeter(transform, localBounds, brush.Position, scaleX, scaleZ);
-        Vector2 direction = SnowSurfaceUtility.WorldDirectionToMeter(transform, brush.Direction, scaleX, scaleZ);
+        Vector2 start = SnowUtility.WorldToMeter(transform, localBounds, brush.PreviousPosition, scaleX, scaleZ);
+        Vector2 end = SnowUtility.WorldToMeter(transform, localBounds, brush.Position, scaleX, scaleZ);
+        Vector2 direction = SnowUtility.WorldDirectionToMeter(transform, brush.Direction, scaleX, scaleZ);
         Vector2 right = new(direction.y, -direction.x);
         Vector2 halfSize = brush.Profile.Size * 0.5f;
 
@@ -116,8 +167,8 @@ public class SnowSurface : MonoBehaviour
         max.x = Mathf.Clamp(max.x, 0f, worldSizeX);
         max.y = Mathf.Clamp(max.y, 0f, worldSizeZ);
 
-        Vector2Int minPage = SnowSurfaceUtility.MeterToPage(min, pageSize, PageCountX, PageCountZ);
-        Vector2Int maxPage = SnowSurfaceUtility.MeterToPage(max, pageSize, PageCountX, PageCountZ);
+        Vector2Int minPage = SnowUtility.MeterToPage(min, pageSize, PageCountX, PageCountZ);
+        Vector2Int maxPage = SnowUtility.MeterToPage(max, pageSize, PageCountX, PageCountZ);
 
         for (int z = minPage.y; z <= maxPage.y; z++)
         {
@@ -125,8 +176,8 @@ public class SnowSurface : MonoBehaviour
             {
                 Vector2Int coordinate = new(x, z);
                 SnowStatePage page = GetOrCreatePage(coordinate);
-                SnowSurfaceUtility.GetPageBounds(coordinate, pageSize, worldSizeX, worldSizeZ, out Vector2 pageMin, out Vector2 pageSizeMeters);
-                brushBuffer.Add(new SnowBrushStroke(page, start, end, direction, brush.Profile.Size, pageMin, pageSizeMeters, Mathf.Clamp01(brush.Pressure), brush.Profile));
+                SnowUtility.GetPageBounds(coordinate, pageSize, worldSizeX, worldSizeZ, out Vector2 pageMin, out Vector2 pageSizeMeters);
+                brushBuffer.Add(new SnowBrushStroke(page, start, end, direction, brush.Profile.Size, pageMin, pageSizeMeters, Mathf.Clamp01(brush.Pressure), brush.Profile, brush.Priority));
             }
         }
 
@@ -137,10 +188,7 @@ public class SnowSurface : MonoBehaviour
     {
         if (pages.TryGetValue(coordinate, out SnowStatePage page)) return page;
 
-        Vector2Int tileCoordinate = SnowSurfaceUtility.PageToTile(coordinate, pageSize, tileSize, TileCountX, TileCountZ);
-        if (!tiles.ContainsKey(tileCoordinate)) tiles.Add(tileCoordinate, new SnowTile(tileCoordinate));
-
-        page = new SnowStatePage(this, coordinate, tileCoordinate);
+        page = new SnowStatePage(this, coordinate);
         pages.Add(coordinate, page);
         return page;
     }
