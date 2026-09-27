@@ -6,25 +6,27 @@ Unity 6 URP 환경에서 구현한 GPU 기반 반응형 눈 표면 시스템입�
 
 넓은 설원 전체에 고해상도 Render Texture를 할당하지 않고, 실제 상호작용이 발생한 영역에만 GPU Page를 할당하는 구조를 목표로 설계했습니다.
 
+![Reactive Snow Surface](Docs/Images/00_overview.png)
+
 ---
 
 ## Demo
 
 ### Continuous Trail
 
-![Continuous Trail](Docs/Images/01_walking.png)
-
 `SurfaceContactAgent`가 캐릭터 Collider 하단과 눈 표면의 접촉을 확인하고, `SnowInteractor`가 이전 접촉 위치와 현재 위치를 하나의 Brush Stroke로 연결합니다. 빠른 이동이나 낮은 프레임에서도 개별 Stamp 사이가 끊어지는 현상을 줄였습니다.
 
-### Surface Deformation
+### Procedural Snow Surface
 
-![Surface Deformation](Docs/Images/02_drag.png)
+![Procedural Snow Surface](Docs/Images/02_surface_detail.png)
 
-Brush의 방향, 크기, 압력과 Profile 설정을 사용하여 Depression, Compression, Displacement를 함께 기록합니다. 입력 대상은 Brush 데이터만 전달하므로 캐릭터 외의 접촉 방식도 같은 처리 흐름에 연결할 수 있습니다.
+여러 크기의 절차적 Noise를 조합하여 낮은 영역과 높은 적설 영역이 한 표면 안에서 자연스럽게 달라지도록 구성했습니다. 눈 표면의 Sparkle은 플레이어 주변 거리에서만 표현하여 넓은 지형 전체가 과도하게 반짝이는 문제를 줄였습니다.
 
 ### Surface Recovery
 
-![Surface Recovery](Docs/Images/03_recovery.png)
+| Recorded | Recovering | Recovered |
+| :---: | :---: | :---: |
+| ![Recorded State](Docs/Images/03_recovery_before.png) | ![Recovering State](Docs/Images/03_recovery_progress.png) | ![Recovered State](Docs/Images/03_recovery_after.png) |
 
 각 픽셀은 별도의 Age 값을 가집니다. 서로 다른 시점에 생성된 흔적이 한꺼번에 사라지지 않고, Lifetime 이후 채널별 복원 속도에 따라 점진적으로 감소합니다.
 
